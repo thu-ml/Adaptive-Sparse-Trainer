@@ -99,9 +99,15 @@ $ torchrun --nproc_per_node=2 main.py \
 ```
 
 
-## LLaMA2 Model Weights
+## LLaMA2 Model 
+
+### Training Script
 
 To Be Released.
+
+### Weights
+
+LLaMA2-7B model with 2:4 sparsity can be found at this [link](https://huggingface.co/Yellowtree/LLaMA2-7B_2-by-4_Sparse)
 
 ## Results
 
