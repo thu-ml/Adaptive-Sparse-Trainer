@@ -103,7 +103,7 @@ $ torchrun --nproc_per_node=2 main.py \
 
 ### Training Script
 
-To Be Released.
+See the LLaMA-2-7B folder.
 
 ### Weights
 
