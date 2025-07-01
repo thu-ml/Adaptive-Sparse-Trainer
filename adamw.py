@@ -34,7 +34,7 @@ class AdamW(Optimizer):
     """
 
     def __init__(self, params, lr=1e-3, betas=(0.9, 0.999), eps=1e-8,
-                 weight_decay=1e-2, amsgrad=False):
+                 weight_decay=1e-2, amsgrad=False,srste_decay=None):
         if not 0.0 <= lr:
             raise ValueError("Invalid learning rate: {}".format(lr))
         if not 0.0 <= eps:
@@ -45,7 +45,8 @@ class AdamW(Optimizer):
             raise ValueError("Invalid beta parameter at index 1: {}".format(betas[1]))
         defaults = dict(lr=lr, betas=betas, eps=eps,
                         weight_decay=weight_decay, amsgrad=amsgrad)
-
+        if srste_decay is not None:
+            self.decay = srste_decay
         super(AdamW, self).__init__(params, defaults)
 
     def __setstate__(self, state):
@@ -64,6 +65,9 @@ class AdamW(Optimizer):
         if closure is not None:
             loss = closure()
         
+        if decay is not None:
+            self.decay = decay
+            
         for group in self.param_groups:
             for p in group['params']:
                 if p.grad is None:
@@ -73,7 +77,17 @@ class AdamW(Optimizer):
                 p.data.mul_(1 - group['lr'] * group['weight_decay'])
 
                 # Perform optimization step
-                grad = p.grad.data                      
+                grad = p.grad.data
+
+                with torch.no_grad():
+                    if getattr(p, 'mask', None) is not None:
+                        decay = self.decay
+                        grad = grad.add(p.data * (1 - p.mask), alpha=decay)
+
+                # if output_flip_flag and getattr(p, 'mask', None) is not None:
+                #     flip_num += p.fliped_mask
+                #     total_param_num += p.param_count
+
                 amsgrad = group['amsgrad']
 
                 state = self.state[p]
@@ -85,19 +99,11 @@ class AdamW(Optimizer):
                     state['exp_avg'] = torch.zeros_like(p.data)
                     # Exponential moving average of squared gradient values
                     state['exp_avg_sq'] = torch.zeros_like(p.data)
-
-                    if getattr(p, 'mask', None) is not None:
-                        state['exp_avg_loss_grad'] = torch.zeros_like(p.data)
-
                     if amsgrad:
                         # Maintains max of all exp. moving avg. of sq. grad. values
                         state['max_exp_avg_sq'] = torch.zeros_like(p.data)
 
                 exp_avg, exp_avg_sq = state['exp_avg'], state['exp_avg_sq']
-
-                if getattr(p, 'mask', None) is not None :
-                    exp_avg_loss_grad = state['exp_avg_loss_grad']
-
                 if amsgrad:
                     max_exp_avg_sq = state['max_exp_avg_sq']
                 beta1, beta2 = group['betas']
@@ -107,23 +113,8 @@ class AdamW(Optimizer):
                 bias_correction2 = 1 - beta2 ** state['step']
 
                 # Decay the first and second moment running average coefficient
-                with torch.no_grad():
-                    if getattr(p, 'mask', None) is not None:
-
-                        loss_grad = p.grad.data.clone()                      
-
-                        elementwise_decay = ~p.mask
-                        decay_term = p.data * elementwise_decay * decay
-                        grad = grad.add(p.data, alpha=decay)  
-
-                        exp_avg_loss_grad.mul_(beta1).add_(loss_grad, alpha=1 - beta1)                         
-                        actual_update = exp_avg_loss_grad + decay_term
-                        exp_avg_sq.mul_(beta2).addcmul_(actual_update, actual_update, value=1 - beta2)
-
-                    else:
-                        exp_avg.mul_(beta1).add_(grad, alpha=1 - beta1)
-                        exp_avg_sq.mul_(beta2).addcmul_( grad, grad, value=1 - beta2)
-
+                exp_avg.mul_(beta1).add_(grad, alpha=1 - beta1)
+                exp_avg_sq.mul_(beta2).addcmul_( grad, grad, value=1 - beta2)
                 if amsgrad:
                     # Maintains the maximum of all 2nd moment running avg. till now
                     torch.max(max_exp_avg_sq, exp_avg_sq, out=max_exp_avg_sq)
@@ -134,12 +125,9 @@ class AdamW(Optimizer):
 
                 step_size = group['lr'] / bias_correction1
 
-                # originally there is only one line here
+                p.data.addcdiv_(exp_avg, denom, value=-step_size )
 
-                with torch.no_grad():
-                    if getattr(p, 'mask', None) is not None:
-                        p.data.addcdiv_(actual_update, denom, value=-step_size)
-                    else:
-                        p.data.addcdiv_(exp_avg, denom, value=-step_size)
-                    # p.data.addcdiv_(exp_avg, denom, value=-step_size)
+        # flips = torch.cat([e.reshape(-1) for e in flips], dim=0)
+        # assert not flips.equal(torch.ones_like(flips))
+        # return loss, torch.sum(flips), torch.mean(flips.double())
         return loss
